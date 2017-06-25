@@ -1,8 +1,9 @@
 #common makefile header
 
-DIR_INC = ../../include
-DIR_BIN = ../../bin
-DIR_LIB = ../../libs
+DIR_INC = ../../include -Imqtt
+# DIR_BIN = ../../bin
+DIR_BIN = ./
+DIR_LIB = /usr/local/lib -L../../libs
 
 TARGET	= tts_sample
 BIN_TARGET = $(DIR_BIN)/$(TARGET)
@@ -24,6 +25,7 @@ $(BIN_TARGET) : $(OBJECTS)
 
 %.o : %.c
 	$(CROSS_COMPILE)gcc -c $(CFLAGS) $< -o $@
+
 clean:
 	@rm -f *.o $(BIN_TARGET)
 

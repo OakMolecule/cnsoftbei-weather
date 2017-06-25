@@ -9,11 +9,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "mqtt.h"
 #include "weather.h"
 #include "num2cn.h"
 #include "qtts.h"
 #include "msp_cmn.h"
 #include "msp_errors.h"
+#include "MQTTClient.h"
 
 /* wav音频头部格式 */
 typedef struct _wave_pcm_hdr
@@ -152,12 +154,13 @@ int main(int argc, char* argv[])
      */
     const char* session_begin_params = "voice_name = xiaoyan, text_encoding = utf8, sample_rate = 16000, speed = 50, volume = 50, pitch = 50, rdn = 2";
     const char* filename             = "tts_sample.wav"; //合成的语音文件名称
-    //	const char* text                 = "亲爱的用户，您好，这是一个语音合成示例，感谢您对科大讯飞语音技术的支持！科大讯飞是亚太地区最大的语音上市公司，股票代码：002230"; //合成文本
     char text[100];
     struct weatherinfo weather;
     char tempStr[10] = "\0";
     char wsStr[10] = "\0";
 
+    mqttInit();
+    MQTTClient_publishMessage(client, TOPIC_TING, &pubmsg, &token);
     getWeather("101031100", &weather);
     num2cn(weather.temp, tempStr);
     printf("temp: %d            %s", weather.temp, tempStr);

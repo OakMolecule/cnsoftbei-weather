@@ -58,3 +58,4 @@ void num2cn(int num, char *buf)
     printf("\n");
     printf("%s\n", buf);
 }
+
