@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include "tts.h"
 #include "mqtt.h"
 #include "weather.h"
 #include "num2cn.h"
