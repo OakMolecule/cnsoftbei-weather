@@ -17,7 +17,6 @@
  *    Ian Craggs - fix for bug #453883
  *    Ian Craggs - fix for bug #480363, issue 13
  *    Ian Craggs - SNI support
- *    Ian Craggs - fix for issues #155, #160
  *******************************************************************************/
 
 /**
@@ -68,8 +67,6 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts);
 void SSLSocket_destroyContext(networkHandles* net);
 void SSLSocket_addPendingRead(int sock);
 
-/// 1 ~ we are responsible for initializing openssl; 0 ~ openssl init is done externally 
-static int handle_openssl_init = 1;
 static ssl_mutex_type* sslLocks = NULL;
 static ssl_mutex_type sslCoreMutex;
 
@@ -419,13 +416,6 @@ extern void SSLLocks_callback(int mode, int n, const char *file, int line)
 	}
 }
 
-
-void SSLSocket_handleOpensslInit(int bool_value)
-{
-	handle_openssl_init = bool_value;
-}
-
-
 int SSLSocket_initialize(void)
 {
 	int rc = 0;
@@ -435,45 +425,41 @@ int SSLSocket_initialize(void)
 	
 	FUNC_ENTRY;
 
-	if (handle_openssl_init)
+	if ((rc = SSL_library_init()) != 1)
+		rc = -1;
+		
+	ERR_load_crypto_strings();
+	SSL_load_error_strings();
+	
+	/* OpenSSL 0.9.8o and 1.0.0a and later added SHA2 algorithms to SSL_library_init(). 
+	Applications which need to use SHA2 in earlier versions of OpenSSL should call 
+	OpenSSL_add_all_algorithms() as well. */
+	
+	OpenSSL_add_all_algorithms();
+	
+	lockMemSize = CRYPTO_num_locks() * sizeof(ssl_mutex_type);
+
+	sslLocks = malloc(lockMemSize);
+	if (!sslLocks)
 	{
-		if ((rc = SSL_library_init()) != 1)
-			rc = -1;
-			
-		ERR_load_crypto_strings();
-		SSL_load_error_strings();
-		
-		/* OpenSSL 0.9.8o and 1.0.0a and later added SHA2 algorithms to SSL_library_init(). 
-		Applications which need to use SHA2 in earlier versions of OpenSSL should call 
-		OpenSSL_add_all_algorithms() as well. */
-		
-		OpenSSL_add_all_algorithms();
-		
-		lockMemSize = CRYPTO_num_locks() * sizeof(ssl_mutex_type);
+		rc = -1;
+		goto exit;
+	}
+	else
+		memset(sslLocks, 0, lockMemSize);
 
-		sslLocks = malloc(lockMemSize);
-		if (!sslLocks)
-		{
-			rc = -1;
-			goto exit;
-		}
-		else
-			memset(sslLocks, 0, lockMemSize);
-
-		for (i = 0; i < CRYPTO_num_locks(); i++)
-		{
-			/* prc = */SSL_create_mutex(&sslLocks[i]);
-		}
+	for (i = 0; i < CRYPTO_num_locks(); i++)
+	{
+		/* prc = */SSL_create_mutex(&sslLocks[i]);
+	}
 
 #if (OPENSSL_VERSION_NUMBER >= 0x010000000)
-		CRYPTO_THREADID_set_callback(SSLThread_id);
+	CRYPTO_THREADID_set_callback(SSLThread_id);
 #else
-		CRYPTO_set_id_callback(SSLThread_id);
+	CRYPTO_set_id_callback(SSLThread_id);
 #endif
-		CRYPTO_set_locking_callback(SSLLocks_callback);
-		
-	}
-	
+	CRYPTO_set_locking_callback(SSLLocks_callback);
+
 	SSL_create_mutex(&sslCoreMutex);
 
 exit:
@@ -484,26 +470,19 @@ exit:
 void SSLSocket_terminate(void)
 {
 	FUNC_ENTRY;
-	
-	if (handle_openssl_init)
+	EVP_cleanup();
+	ERR_free_strings();
+	CRYPTO_set_locking_callback(NULL);
+	if (sslLocks)
 	{
-		EVP_cleanup();
-		ERR_free_strings();
-		CRYPTO_set_locking_callback(NULL);
-		if (sslLocks)
-		{
-			int i = 0;
+		int i = 0;
 
-			for (i = 0; i < CRYPTO_num_locks(); i++)
-			{
-				SSL_destroy_mutex(&sslLocks[i]);
-			}
-			free(sslLocks);
+		for (i = 0; i < CRYPTO_num_locks(); i++)
+		{
+			SSL_destroy_mutex(&sslLocks[i]);
 		}
+		free(sslLocks);
 	}
-	
-	SSL_destroy_mutex(&sslCoreMutex);
-	
 	FUNC_EXIT;
 }
 
@@ -522,6 +501,8 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 	
 	if (opts->keyStore)
 	{
+		int rc1 = 0;
+
 		if ((rc = SSL_CTX_use_certificate_chain_file(net->ctx, opts->keyStore)) != 1)
 		{
 			SSLSocket_error("SSL_CTX_use_certificate_chain_file", NULL, net->socket, rc);
@@ -535,13 +516,13 @@ int SSLSocket_createContext(networkHandles* net, MQTTClient_SSLOptions* opts)
 		{
 			SSL_CTX_set_default_passwd_cb(net->ctx, pem_passwd_cb);
 			SSL_CTX_set_default_passwd_cb_userdata(net->ctx, (void*)opts->privateKeyPassword);
-		}
+    }
 		
 		/* support for ASN.1 == DER format? DER can contain only one certificate? */
-		rc = SSL_CTX_use_PrivateKey_file(net->ctx, opts->privateKey, SSL_FILETYPE_PEM);
+		rc1 = SSL_CTX_use_PrivateKey_file(net->ctx, opts->privateKey, SSL_FILETYPE_PEM);
 		if (opts->privateKey == opts->keyStore)
 			opts->privateKey = NULL;
-		if (rc != 1)
+		if (rc1 != 1)
 		{
 			SSLSocket_error("SSL_CTX_use_PrivateKey_file", NULL, net->socket, rc);
 			goto free_ctx;
@@ -595,7 +576,6 @@ int SSLSocket_setSocketForSSL(networkHandles* net, MQTTClient_SSLOptions* opts, 
 	if (net->ctx != NULL || (rc = SSLSocket_createContext(net, opts)) == 1)
 	{
 		int i;
-
 		SSL_CTX_set_info_callback(net->ctx, SSL_CTX_info_callback);
 		SSL_CTX_set_msg_callback(net->ctx, SSL_CTX_msg_callback);
    		if (opts->enableServerCertAuth) 

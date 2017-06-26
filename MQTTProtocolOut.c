@@ -18,8 +18,6 @@
  *    Rong Xiang, Ian Craggs - C++ compatibility
  *    Ian Craggs - fix for bug 479376
  *    Ian Craggs - SNI support
- *    Ian Craggs - fix for issue #164
- *    Ian Craggs - fix for issue #179
  *******************************************************************************/
 
 /**
@@ -58,7 +56,7 @@ char* MQTTProtocol_addressPort(const char* uri, int* port)
 			colon_pos = NULL;  /* means it was an IPv6 separator, not for host:port */
 	}
 
-	if (colon_pos) /* have to strip off the port */
+	if (colon_pos)
 	{
 		size_t addr_len = colon_pos - uri;
 		buf = malloc(addr_len + 1);
@@ -70,15 +68,8 @@ char* MQTTProtocol_addressPort(const char* uri, int* port)
 
 	len = strlen(buf);
 	if (buf[len - 1] == ']')
-	{
-		if (buf == (char*)uri)
-		{
-			buf = malloc(len);  /* we are stripping off the final ], so length is 1 shorter */
-			MQTTStrncpy(buf, uri, len);
-		}
-		else
-			buf[len - 1] = '\0';
-	}
+		buf[len - 1] = '\0';
+
 	FUNC_EXIT;
 	return buf;
 }
@@ -116,7 +107,7 @@ int MQTTProtocol_connect(const char* ip_address, Clients* aClient, int MQTTVersi
 			if (SSLSocket_setSocketForSSL(&aClient->net, aClient->sslopts, addr) == 1)
 			{
 				rc = SSLSocket_connect(aClient->net.ssl, aClient->net.socket);
-				if (rc == TCPSOCKET_INTERRUPTED)
+				if (rc == -1)
 					aClient->connect_state = 2; /* SSL connect called - wait for completion */
 			}
 			else

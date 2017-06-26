@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2017 IBM Corp.
+ * Copyright (c) 2009, 2016 IBM Corp.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -14,9 +14,6 @@
  *    Ian Craggs - initial implementation and documentation
  *    Ian Craggs - async client updates
  *    Ian Craggs - fix for bug 484496
- *    Juergen Kosel, Ian Craggs - fix for issue #135
- *    Ian Craggs - issue #217
- *    Ian Craggs - fix for issue #186
  *******************************************************************************/
 
 /**
@@ -173,22 +170,12 @@ int Socket_addSocket(int newSd)
 	FUNC_ENTRY;
 	if (ListFindItem(s.clientsds, &newSd, intcompare) == NULL) /* make sure we don't add the same socket twice */
 	{
-		if (s.clientsds->count >= FD_SETSIZE)
-		{
-			Log(LOG_ERROR, -1, "addSocket: exceeded FD_SETSIZE %d", FD_SETSIZE);
-			rc = SOCKET_ERROR;
-		}
-		else
-		{
-			int* pnewSd = (int*)malloc(sizeof(newSd));
-			*pnewSd = newSd;
-			ListAppend(s.clientsds, pnewSd, sizeof(newSd));
-			FD_SET(newSd, &(s.rset_saved));
-			s.maxfdp1 = max(s.maxfdp1, newSd + 1);
-			rc = Socket_setnonblocking(newSd);
-			if (rc == SOCKET_ERROR)
-				Log(LOG_ERROR, -1, "addSocket: setnonblocking");
-		}
+		int* pnewSd = (int*)malloc(sizeof(newSd));
+		*pnewSd = newSd;
+		ListAppend(s.clientsds, pnewSd, sizeof(newSd));
+		FD_SET(newSd, &(s.rset_saved));
+		s.maxfdp1 = max(s.maxfdp1, newSd + 1);
+		rc = Socket_setnonblocking(newSd);
 	}
 	else
 		Log(LOG_ERROR, -1, "addSocket: socket %d already in the list", newSd);
@@ -682,7 +669,7 @@ int Socket_new(char* addr, int port, int* sock)
 
 			Log(TRACE_MIN, -1, "New socket %d for %s, port %d",	*sock, addr, port);
 			if (Socket_addSocket(*sock) == SOCKET_ERROR)
-				rc = Socket_error("addSocket", *sock);
+				rc = Socket_error("setnonblocking", *sock);
 			else
 			{
 				/* this could complete immmediately, even though we are non-blocking */
@@ -702,15 +689,6 @@ int Socket_new(char* addr, int port, int* sock)
 					Log(TRACE_MIN, 15, "Connect pending");
 				}
 			}
-                        /* Prevent socket leak by closing unusable sockets,
-                         * as reported in
-                         * https://github.com/eclipse/paho.mqtt.c/issues/135
-                         */
-                        if (rc != 0 && (rc != EINPROGRESS) && (rc != EWOULDBLOCK))
-                        {
-                            Socket_close(*sock); /* close socket and remove from our list of sockets */
-                            *sock = -1; /* as initialized before */
-                        }
 		}
 	}
 	FUNC_EXIT_RC(rc);
@@ -763,7 +741,7 @@ int Socket_continueWrite(int socket)
 				add some of the buffer */
 			size_t offset = pw->bytes - curbuflen;
 			iovecs1[++curbuf].iov_len = pw->iovecs[i].iov_len - (ULONG)offset;
-			iovecs1[curbuf].iov_base = (char*)pw->iovecs[i].iov_base + offset;
+			iovecs1[curbuf].iov_base = pw->iovecs[i].iov_base + offset;
 			break;
 		}
 		curbuflen += pw->iovecs[i].iov_len;

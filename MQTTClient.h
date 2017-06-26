@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2017 IBM Corp.
+ * Copyright (c) 2009, 2015 IBM Corp.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
@@ -15,7 +15,6 @@
  *    Ian Craggs, Allan Stockdill-Mander - SSL updates
  *    Ian Craggs - multiple server connection support
  *    Ian Craggs - MQTT 3.1.1 support
- *    Ian Craggs - remove const from eyecatchers #168
  *******************************************************************************/
 
 /**
@@ -41,7 +40,7 @@
  * @endcond
  * @cond MQTTClient_main
  * @mainpage MQTT Client library for C
- * &copy; Copyright IBM Corp. 2009, 2017
+ * &copy; Copyright IBM Corp. 2009, 2015
  * 
  * @brief An MQTT client library in C.
  *
@@ -49,7 +48,7 @@
  * considered easier to use.  Some of the calls will block.  For the new
  * totally asynchronous API where no calls block, which is especially suitable
  * for use in windowed environments, see the
- * <a href="../../MQTTAsync/html/index.html">MQTT C Client Asynchronous API Documentation</a>.
+ * <a href="../Casync/index.html">MQTT C Client Asynchronous API Documentation</a>.
  * The MQTTClient API is not thread safe, whereas the MQTTAsync API is.
  *
  * An MQTT client application connects to MQTT-capable servers.
@@ -167,10 +166,6 @@
  * Return code: A QoS value that falls outside of the acceptable range (0,1,2)
  */
 #define MQTTCLIENT_BAD_QOS -9
-/**
- * Return code: Attempting SSL connection using non-SSL version of library
- */
-#define MQTTCLIENT_SSL_NOT_SUPPORTED -10
 
 /**
  * Default MQTT version to connect with.  Use 3.1.1 then fall back to 3.1
@@ -188,12 +183,6 @@
  * Bad return code from subscribe, as defined in the 3.1.1 specification
  */
 #define MQTT_BAD_SUBSCRIBE 0x80
-
-/** 
- * Global init of mqtt library. Call once on program start to set global behaviour.
- * handle_openssl_init - if mqtt library should handle openssl init (1) or rely on the caller to init it before using mqtt (0)
- */
-void MQTTClient_global_init(int handle_openssl_init);
 
 /**
  * A handle representing an MQTT client. A valid client handle is available
@@ -391,6 +380,8 @@ DLLExport int MQTTClient_setCallbacks(MQTTClient handle, void* context, MQTTClie
  * <i>tcp://localhost:1883</i>.
  * @param clientId The client identifier passed to the server when the
  * client connects to it. It is a null-terminated UTF-8 encoded string. 
+ * ClientIDs must be no longer than 23 characters according to the MQTT 
+ * specification.
  * @param persistence_type The type of persistence to be used by the client:
  * <br>
  * ::MQTTCLIENT_PERSISTENCE_NONE: Use in-memory persistence. If the device or 
@@ -435,33 +426,25 @@ DLLExport int MQTTClient_create(MQTTClient* handle, const char* serverURI, const
 typedef struct
 {
 	/** The eyecatcher for this structure.  must be MQTW. */
-	char struct_id[4];
-	/** The version number of this structure.  Must be 0 or 1 
-		   0 means there is no binary payload option
-	 */
+	const char struct_id[4];
+	/** The version number of this structure.  Must be 0 */
 	int struct_version;
 	/** The LWT topic to which the LWT message will be published. */
 	const char* topicName;
-	/** The LWT payload in string form. */
+	/** The LWT payload. */
 	const char* message;
 	/**
-	 * The retained flag for the LWT message (see MQTTClient_message.retained).
-	 */
+      * The retained flag for the LWT message (see MQTTClient_message.retained).
+      */
 	int retained;
 	/** 
-	 * The quality of service setting for the LWT message (see 
-	 * MQTTClient_message.qos and @ref qos).
-	 */
+      * The quality of service setting for the LWT message (see 
+      * MQTTClient_message.qos and @ref qos).
+      */
 	int qos;
-  /** The LWT payload in binary form. This is only checked and used if the message option is NULL */
-	struct
-	{
-  	int len;            /**< binary payload length */
-		const void* data;  /**< binary payload data */
-	} payload;
 } MQTTClient_willOptions;
 
-#define MQTTClient_willOptions_initializer { {'M', 'Q', 'T', 'W'}, 1, NULL, NULL, 0, 0, {0, NULL} }
+#define MQTTClient_willOptions_initializer { {'M', 'Q', 'T', 'W'}, 0, NULL, NULL, 0, 0 }
 
 /**
 * MQTTClient_sslProperties defines the settings to establish an SSL/TLS connection using the 
@@ -478,7 +461,7 @@ typedef struct
 typedef struct 
 {
 	/** The eyecatcher for this structure.  Must be MQTS */
-	char struct_id[4];
+	const char struct_id[4];
 	/** The version number of this structure.  Must be 0 */
 	int struct_version;	
 	
@@ -531,13 +514,12 @@ typedef struct
 typedef struct
 {
 	/** The eyecatcher for this structure.  must be MQTC. */
-	char struct_id[4];
-	/** The version number of this structure.  Must be 0, 1, 2, 3, 4 or 5.  
+	const char struct_id[4];
+	/** The version number of this structure.  Must be 0, 1, 2, 3 or 4.  
 	 * 0 signifies no SSL options and no serverURIs
 	 * 1 signifies no serverURIs 
 	 * 2 signifies no MQTTVersion
 	 * 3 signifies no returned values
-	 * 4 signifies no binary password option
 	 */
 	int struct_version;
 	/** The "keep alive" interval, measured in seconds, defines the maximum time
@@ -644,16 +626,9 @@ typedef struct
 		int MQTTVersion;     /**< the MQTT version used to connect with */
 		int sessionPresent;  /**< if the MQTT version is 3.1.1, the value of sessionPresent returned in the connack */
 	} returned;
-	/** 
-   * Optional binary password.  Only checked and used if the password option is NULL
-   */
-  struct {
-  	int len;            /**< binary password length */
-		const void* data;  /**< binary password data */
-	} binarypwd;
 } MQTTClient_connectOptions;
 
-#define MQTTClient_connectOptions_initializer { {'M', 'Q', 'T', 'C'}, 5, 60, 1, 1, NULL, NULL, NULL, 30, 20, NULL, 0, NULL, 0,         {NULL, 0, 0}, {0, NULL} }
+#define MQTTClient_connectOptions_initializer { {'M', 'Q', 'T', 'C'}, 4, 60, 1, 1, NULL, NULL, NULL, 30, 20, NULL, 0, NULL, 0, {NULL, 0, 0} }
 
 /**
   * MQTTClient_libraryInfo is used to store details relating to the currently used
@@ -1060,9 +1035,9 @@ DLLExport void MQTTClient_destroy(MQTTClient* handle);
   * of messages occurs.
   * @page pubsync Synchronous publication example
 @code
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 #include "MQTTClient.h"
 
 #define ADDRESS     "tcp://localhost:1883"
@@ -1109,9 +1084,9 @@ int main(int argc, char* argv[])
   *
   * @page pubasync Asynchronous publication example
 @code{.c}
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 #include "MQTTClient.h"
 
 #define ADDRESS     "tcp://localhost:1883"
@@ -1193,9 +1168,9 @@ int main(int argc, char* argv[])
   * @endcode
   * @page subasync Asynchronous subscription example
 @code
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "stdio.h"
+#include "stdlib.h"
+#include "string.h"
 #include "MQTTClient.h"
 
 #define ADDRESS     "tcp://localhost:1883"

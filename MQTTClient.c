@@ -30,8 +30,6 @@
  *    Ian Craggs - fix for bug 474905 - insufficient synchronization for subscribe, unsubscribe, connect
  *    Ian Craggs - make it clear that yield and receive are not intended for multi-threaded mode (bug 474748)
  *    Ian Craggs - SNI support, message queue unpersist bug
- *    Ian Craggs - binary will message support
- *    Ian Craggs - waitforCompletion fix #240
  *******************************************************************************/
 
 /**
@@ -61,24 +59,14 @@
 
 #if defined(OPENSSL)
 #include <openssl/ssl.h>
-#else
-#define URI_SSL "ssl://"
 #endif
 
 #define URI_TCP "tcp://"
 
 #include "VersionInfo.h"
 
-
 const char *client_timestamp_eye = "MQTTClientV3_Timestamp " BUILD_TIMESTAMP;
 const char *client_version_eye = "MQTTClientV3_Version " CLIENT_VERSION;
-
-void MQTTClient_global_init(int handle_openssl_init)
-{
-#if defined(OPENSSL)
-	SSLSocket_handleOpensslInit(handle_openssl_init);
-#endif
-}
 
 static ClientStates ClientState =
 {
@@ -167,6 +155,7 @@ void MQTTClient_init(void)
 
 static volatile int initialized = 0;
 static List* handles = NULL;
+static time_t last;
 static int running = 0;
 static int tostop = 0;
 static thread_id_type run_id = 0;
@@ -332,16 +321,13 @@ int MQTTClient_create(MQTTClient* handle, const char* serverURI, const char* cli
 	memset(m, '\0', sizeof(MQTTClients));
 	if (strncmp(URI_TCP, serverURI, strlen(URI_TCP)) == 0)
 		serverURI += strlen(URI_TCP);
+#if defined(OPENSSL)
 	else if (strncmp(URI_SSL, serverURI, strlen(URI_SSL)) == 0)
 	{
-#if defined(OPENSSL)
 		serverURI += strlen(URI_SSL);
 		m->ssl = 1;
-#else
-        rc = MQTTCLIENT_SSL_NOT_SUPPORTED;
-        goto exit;
-#endif
 	}
+#endif
 	m->serverURI = MQTTStrdup(serverURI);
 	ListAppend(handles, m, sizeof(MQTTClients));
 
@@ -1006,20 +992,6 @@ exit:
   return rc;
 }
 
-static int retryLoopInterval = 5;
-
-static void setRetryLoopInterval(int keepalive)
-{
-	int proposed = keepalive / 10;
-	
-	if (proposed < 1)
-		proposed = 1;
-	else if (proposed > 5)
-		proposed = 5;
-	if (proposed < retryLoopInterval)
-		retryLoopInterval = proposed;
-}
-
 
 static int MQTTClient_connectURI(MQTTClient handle, MQTTClient_connectOptions* options, const char* serverURI)
 {
@@ -1034,43 +1006,21 @@ static int MQTTClient_connectURI(MQTTClient handle, MQTTClient_connectOptions* o
 	start = MQTTClient_start_clock();
 
 	m->c->keepAliveInterval = options->keepAliveInterval;
-	setRetryLoopInterval(options->keepAliveInterval);
 	m->c->cleansession = options->cleansession;
 	m->c->maxInflightMessages = (options->reliable) ? 1 : 10;
 
 	if (m->c->will)
 	{
-		free(m->c->will->payload);
+		free(m->c->will->msg);
 		free(m->c->will->topic);
 		free(m->c->will);
 		m->c->will = NULL;
 	}
 
-	if (options->will && (options->will->struct_version == 0 || options->will->struct_version == 1))
+	if (options->will && options->will->struct_version == 0)
 	{
-		const void* source = NULL;
-		
 		m->c->will = malloc(sizeof(willMessages));
-		if (options->will->message || (options->will->struct_version == 1 && options->will->payload.data))
-		{
-			if (options->will->struct_version == 1 && options->will->payload.data)
-			{
-				m->c->will->payloadlen = options->will->payload.len;
-				source = options->will->payload.data;
-			}
-			else
-			{
-				m->c->will->payloadlen = strlen(options->will->message);
-				source = (void*)options->will->message;
-			}
-			m->c->will->payload = malloc(m->c->will->payloadlen);
-			memcpy(m->c->will->payload, source, m->c->will->payloadlen);
-		}
-		else 
-		{
-			m->c->will->payload = NULL;
-			m->c->will->payloadlen = 0;
-		}
+		m->c->will->msg = MQTTStrdup(options->will->message);
 		m->c->will->qos = options->will->qos;
 		m->c->will->retained = options->will->retained;
 		m->c->will->topic = MQTTStrdup(options->will->topicName);
@@ -1113,13 +1063,6 @@ static int MQTTClient_connectURI(MQTTClient handle, MQTTClient_connectOptions* o
 
 	m->c->username = options->username;
 	m->c->password = options->password;
-	if (options->password)
-		m->c->passwordlen = strlen(options->password) + 1;
-	else if (options->struct_version >= 5 && options->binarypwd.data)
-	{
-		m->c->password = options->binarypwd.data;
-		m->c->passwordlen = options->binarypwd.len;
-	}
 	m->c->retryInterval = options->retryInterval;
 
 	if (options->struct_version >= 3)
@@ -1155,7 +1098,9 @@ int MQTTClient_connect(MQTTClient handle, MQTTClient_connectOptions* options)
 		goto exit;
 	}
 
-	if (strncmp(options->struct_id, "MQTC", 4) != 0 || 	options->struct_version < 0 || options->struct_version > 5)
+	if (strncmp(options->struct_id, "MQTC", 4) != 0 || 
+		(options->struct_version != 0 && options->struct_version != 1 && options->struct_version != 2
+			&& options->struct_version != 3 && options->struct_version != 4))
 	{
 		rc = MQTTCLIENT_BAD_STRUCTURE;
 		goto exit;
@@ -1163,7 +1108,7 @@ int MQTTClient_connect(MQTTClient handle, MQTTClient_connectOptions* options)
 
 	if (options->will) /* check validity of will options structure */
 	{
-		if (strncmp(options->will->struct_id, "MQTW", 4) != 0 || (options->will->struct_version != 0 && options->will->struct_version != 1))
+		if (strncmp(options->will->struct_id, "MQTW", 4) != 0 || options->will->struct_version != 0)
 		{
 			rc = MQTTCLIENT_BAD_STRUCTURE;
 			goto exit;
@@ -1215,10 +1160,6 @@ int MQTTClient_connect(MQTTClient handle, MQTTClient_connectOptions* options)
 exit:
 	if (m->c->will)
 	{
-		if (m->c->will->payload)
-			free(m->c->will->payload);
-		if (m->c->will->topic)
-			free(m->c->will->topic);
 		free(m->c->will);
 		m->c->will = NULL;
 	}
@@ -1639,12 +1580,11 @@ exit:
 
 static void MQTTClient_retry(void)
 {
-	static time_t last = 0L;
 	time_t now;
 
 	FUNC_ENTRY;
 	time(&(now));
-	if (difftime(now, last) > retryLoopInterval)
+	if (difftime(now, last) > 5)
 	{
 		time(&(last));
 		MQTTProtocol_keepalive(now);
@@ -1945,23 +1885,29 @@ int MQTTClient_waitForCompletion(MQTTClient handle, MQTTClient_deliveryToken mdt
 		rc = MQTTCLIENT_FAILURE;
 		goto exit;
 	}
+	if (m->c->connected == 0)
+	{
+		rc = MQTTCLIENT_DISCONNECTED;
+		goto exit;
+	}
+
+	if (ListFindItem(m->c->outboundMsgs, &mdt, messageIDCompare) == NULL)
+	{
+		rc = MQTTCLIENT_SUCCESS; /* well we couldn't find it */
+		goto exit;
+	}
 
 	elapsed = MQTTClient_elapsed(start);
 	while (elapsed < timeout)
 	{
-		if (m->c->connected == 0)
-		{
-			rc = MQTTCLIENT_DISCONNECTED;
-			goto exit;
-		}
+		Thread_unlock_mutex(mqttclient_mutex);
+		MQTTClient_yield();
+		Thread_lock_mutex(mqttclient_mutex);
 		if (ListFindItem(m->c->outboundMsgs, &mdt, messageIDCompare) == NULL)
 		{
 			rc = MQTTCLIENT_SUCCESS; /* well we couldn't find it */
 			goto exit;
 		}
-		Thread_unlock_mutex(mqttclient_mutex);
-		MQTTClient_yield();
-		Thread_lock_mutex(mqttclient_mutex);
 		elapsed = MQTTClient_elapsed(start);
 	}
 
