@@ -186,7 +186,7 @@ void playWeather()
     system("aplay -c 1 -t raw -r 16000 -f mu_law tts_sample.wav");
 }
 
-void playWeather()
+void play()
 {
     const char* filename             = "tts_sample.wav"; //合成的语音文件名称
     char text[100];
