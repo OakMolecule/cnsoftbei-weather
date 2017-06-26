@@ -13,6 +13,7 @@
 #include "MQTTClient.h"
 
 const char* session_begin_params = "voice_name = xiaoyan, text_encoding = utf8, sample_rate = 16000, speed = 50, volume = 50, pitch = 50, rdn = 2";
+int         ret                  = MSP_SUCCESS;
 /* wav音频头部格式 */
 typedef struct _wave_pcm_hdr
 {
@@ -53,7 +54,6 @@ wave_pcm_hdr default_wav_hdr =
 
 void xunfeiInit()
 {
-    int         ret                  = MSP_SUCCESS;
     const char* login_params         = "appid = 59119dea, work_dir = .";//登录参数,appid与msc库绑定,请勿随意改动
     /*
      * rdn:           合成音频数字发音方式
