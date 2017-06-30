@@ -12,6 +12,8 @@
 #include "msp_errors.h"
 #include "MQTTClient.h"
 
+int text_to_speech(const char* src_text, const char* des_path, const char* params);
+
 const char* session_begin_params = "voice_name = xiaoyan, text_encoding = utf8, sample_rate = 16000, speed = 50, volume = 50, pitch = 50, rdn = 2";
 int         ret                  = MSP_SUCCESS;
 /* wav音频头部格式 */
@@ -66,8 +68,6 @@ void xunfeiInit()
      *
      * 详细参数说明请参阅《讯飞语音云MSC--API文档》
      */
-
-    num2cn(weather.ws, wsStr);
 
     /* 用户登录 */
     ret = MSPLogin(NULL, NULL, login_params);//第一个参数是用户名，第二个参数是密码，第三个参数是登录参数，用户名和密码可在http://www.xfyun.cn注册获取
@@ -183,20 +183,12 @@ void playWeather()
         printf("text_to_speech failed, error code: %d.\n", ret);
     }
     printf("合成完毕\n");
-    system("aplay -c 1 -t raw -r 16000 -f mu_law tts_sample.wav");
+    system("aplay -c 1 -t raw -r 16000 -f mu_law weather.wav");
 }
 
-void play()
+void playMedcine(const char *text)
 {
-    const char* filename             = "tts_sample.wav"; //合成的语音文件名称
-    char text[100];
-    char wsStr[10] = "\0";
-    char tempStr[10] = "\0";
-    struct weatherinfo weather;
-    getWeather("101031100", &weather);
-    num2cn(weather.temp, tempStr);
-    printf("temp: %d            %s", weather.temp, tempStr);
-    num2cn(weather.ws, wsStr);
+    const char* filename             = "medicine.wav"; //合成的语音文件名称
 
     /* 文本合成 */
     printf("开始合成 ...\n");
@@ -206,7 +198,7 @@ void play()
         printf("text_to_speech failed, error code: %d.\n", ret);
     }
     printf("合成完毕\n");
-    system("aplay -c 1 -t raw -r 16000 -f mu_law tts_sample.wav");
+    system("aplay -c 1 -t raw -r 16000 -f mu_law medicine.wav");
 }
 
 void xunfeiLogout()

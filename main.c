@@ -1,7 +1,7 @@
 #include "mqtt.h"
 #include "weather.h"
 #include "serial.h"
-#include "tts.c"
+#include "tts.h"
 
 int main()
 {
